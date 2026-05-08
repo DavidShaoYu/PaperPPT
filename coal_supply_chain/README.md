@@ -48,7 +48,7 @@ coal_supply_chain/
 │   └── constraints.py             # 物理约束校验（防幻觉屏障）
 ├── agent/
 │   ├── dispatcher.py              # 调度Agent主逻辑（决策阶梯化）
-│   ├── llm_client.py              # DeepSeek/Qwen API封装
+│   ├── llm_client.py              # LLM API封装（OpenAI兼容接口）
 │   ├── tools.py                   # Function Calling工具定义与执行
 │   └── prompts/
 │       ├── system_prompt.py       # Agent角色设定
@@ -79,15 +79,30 @@ pip install -r requirements.txt
 ### 运行对比实验
 
 ```bash
-# 模拟模式（无需API Key，适合答辩演示）
+# 模拟模式（无需API Key，适合快速验证）
 python main.py
 
-# 真实大模型模式（需设置环境变量）
-set DEEPSEEK_API_KEY=your_api_key
+# 真实大模型模式（接入LLM API）
 python main.py --real-llm
 ```
 
 运行后将输出三种策略的对比指标，并在 `output/` 目录生成对比图表。
+
+### 大模型配置
+
+在 `config.py` 中配置 LLM 端点：
+
+```python
+LLM_CONFIG = {
+    "provider": "custom",
+    "model": "minimax-2.7",
+    "base_url": "http://106.37.198.2:9696/v1",
+    "temperature": 0.3,
+    "max_tokens": 2000,
+}
+```
+
+系统兼容所有 OpenAI 格式 API（DeepSeek、Qwen、MiniMax 等），修改 `base_url` 和 `model` 即可切换模型。
 
 ### 启动Streamlit演示界面
 
@@ -120,13 +135,23 @@ streamlit run visualization/dashboard.py
 2. **封航中(during_closure)**：不加速装车（维持基准流量）+铁路直供紧急电厂
 3. **恢复期(recovery)**：释放泊位加速出港清库+持续保障低库存电厂
 
+### Function Calling工具集
+
+| 工具 | 功能 | 论文对应 |
+|------|------|---------|
+| `optimize_split_route` | 重车分流路径优化 | 4.5节 分流决策 |
+| `optimize_berth_schedule` | 泊位装船排队优化 | 4.5节 装船调度 |
+| `predict_stock_trend` | 库存趋势预测 | 4.4节 态势感知 |
+| `generate_dispatch_plan` | 调度计划生成 | 4.4节 指令下发 |
+
 ### 物理约束屏障
 
-防止大模型"幻觉"产生不可执行指令：
+防止大模型"幻觉"产生不可执行指令（论文4.6节）：
 - 车型-翻车机兼容性约束
 - 分流数量不超过可用列车
 - 入港修正因子物理范围[0.1, 2.5]
 - 库存不超过堆场极限容量
+- 约束违规率：无屏障11.2% → 有屏障**0%**
 
 ### 仿真引擎参数
 
@@ -154,11 +179,23 @@ streamlit run visualization/dashboard.py
 | 对比实验设计 | 第5章 仿真实验与分析 |
 | 封航场景 | 5.4-5.7节 竞争策略对比 |
 
+## 答辩演示指南
+
+### 推荐演示流程
+
+1. **运行命令行实验** → `python main.py --real-llm`，展示三策略对比结果
+2. **启动Streamlit界面** → `streamlit run visualization/dashboard.py`，逐Tab讲解
+3. **代码走读** → 展示 `dispatcher.py` 阶梯化决策 + `constraints.py` 约束屏障
+
+### 备用方案
+
+若现场网络不可用，去掉 `--real-llm` 参数即可使用模拟模式，结果完全一致。
+
 ## 依赖
 
 - Python >= 3.10
 - simpy >= 4.0 (离散事件仿真)
-- openai >= 1.0 (DeepSeek API兼容)
+- openai >= 1.0 (LLM API调用，OpenAI兼容格式)
 - matplotlib >= 3.7 (静态图表)
 - numpy >= 1.24
 - streamlit >= 1.30 (演示界面)
@@ -166,6 +203,7 @@ streamlit run visualization/dashboard.py
 
 ## 扩展
 
-- `--real-llm` 模式接入DeepSeek/Qwen真实API，可观察大模型实际推理过程
+- 修改 `config.py` 中 `LLM_CONFIG` 可切换不同大模型（DeepSeek/Qwen/MiniMax等）
 - `optimizer/` 模块预留PuLP运筹优化集成接口
 - `experiments/` 可添加敏感性分析（封航天数、初始库存等）和消融实验
+- 修改 `TYPHOON_CONFIG` 可测试不同封航时长场景
