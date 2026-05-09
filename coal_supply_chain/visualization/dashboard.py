@@ -13,6 +13,7 @@ from baseline.manual_dispatch import manual_dispatch_strategy
 from baseline.rule_dispatch import rule_dispatch_strategy
 from agent.dispatcher import create_llm_strategy
 from config import TYPHOON_CONFIG, PORT_CONFIG, SIM_DURATION_HOURS
+from visualization.network_animation import create_simple_network_animation
 
 
 st.set_page_config(
@@ -124,8 +125,8 @@ def main():
         st.metric("电厂断供", "0家", delta="-3家 vs B0", delta_color="inverse")
         st.metric("约束违规率", f"{agent.get_violation_rate():.1%}", delta="论文目标0%")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🏗️ 系统架构", "📊 核心对比", "⏱️ 仿真回放",
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "🏗️ 系统架构", "🚂 动态仿真", "📊 核心对比", "⏱️ 仿真回放",
         "🧠 决策链路", "🏭 电厂供应", "📈 综合评价"
     ])
 
@@ -133,19 +134,47 @@ def main():
         render_architecture_tab()
 
     with tab2:
-        render_comparison_tab(results)
+        render_network_animation_tab(results)
 
     with tab3:
-        render_playback_tab(results)
+        render_comparison_tab(results)
 
     with tab4:
-        render_decision_chain_tab(agent, results)
+        render_playback_tab(results)
 
     with tab5:
-        render_plant_tab(results)
+        render_decision_chain_tab(agent, results)
 
     with tab6:
+        render_plant_tab(results)
+
+    with tab7:
         render_evaluation_tab(results, agent)
+
+
+def render_network_animation_tab(results):
+    """2D铁路网络动态仿真"""
+    st.header("供应链铁路网络动态仿真")
+    st.markdown("""
+    点击 **▶ 播放仿真** 按钮观看列车在铁路网络上的动态运行。
+    红色实心点为**重车（载煤前往港口）**，绿色空心点为**空车（返回装车站）**。
+    """)
+
+    metrics_llm = results["大模型调度"]
+    fig = create_simple_network_animation(metrics_llm)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 下方补充实时KPI
+    st.markdown("### 仿真关键指标（最终结果）")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("港口库存峰值", f"{max(metrics_llm.hourly_port_storage):.1f}万吨")
+    with col2:
+        st.metric("电厂断供", f"{sum(1 for v in metrics_llm.plant_interruptions.values() if v > 0)}家")
+    with col3:
+        st.metric("日均入港", f"{sum(metrics_llm.hourly_inflow)/7:.1f}万吨/天")
+    with col4:
+        st.metric("日均出港", f"{sum(metrics_llm.hourly_outflow)/7:.1f}万吨/天")
 
 
 def render_architecture_tab():
