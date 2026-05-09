@@ -27,14 +27,17 @@ class CoalSupplyChainSimulation:
 
     def __init__(self, dispatch_strategy: Optional[Callable] = None,
                  enable_typhoon: bool = True, seed: int = 42,
-                 dispatch_interval: int = None):
+                 dispatch_interval: int = None,
+                 initial_storage: float = None,
+                 closure_end_hour: int = None):
         random.seed(seed)
         self.dispatch_strategy = dispatch_strategy
         self.enable_typhoon = enable_typhoon
         self.dispatch_interval = dispatch_interval or DISPATCH_INTERVAL_HOURS
+        self.closure_end_hour = closure_end_hour or TYPHOON_CONFIG["closure_end_hour"]
         self.metrics = SimulationMetrics()
 
-        self.port_storage = float(PORT_CONFIG["initial_storage"])
+        self.port_storage = float(initial_storage if initial_storage is not None else PORT_CONFIG["initial_storage"])
         self.port_max = float(PORT_CONFIG["total_storage_capacity"])
         self.safety_high = float(PORT_CONFIG["safety_high"])
         self.safety_low = float(PORT_CONFIG["safety_low"])
@@ -115,12 +118,11 @@ class CoalSupplyChainSimulation:
         if hour == TYPHOON_CONFIG["closure_start_hour"]:
             self.is_closed = True
             self.current_outflow_modifier = 0.0
-        elif hour == TYPHOON_CONFIG["closure_end_hour"]:
+        elif hour == self.closure_end_hour:
             self.is_closed = False
-            self.current_outflow_modifier = 2.1  # 恢复后大量积压船舶同时装货
+            self.current_outflow_modifier = 2.1
 
-        # 恢复48小时后逐步回归正常
-        hours_since_reopen = hour - TYPHOON_CONFIG["closure_end_hour"]
+        hours_since_reopen = hour - self.closure_end_hour
         if not self.is_closed and hours_since_reopen > 48:
             self.current_outflow_modifier = max(1.0, self.current_outflow_modifier * 0.95)
 
@@ -237,7 +239,7 @@ class CoalSupplyChainSimulation:
                 "is_active": self.is_closed,
                 "warning_received": hour >= TYPHOON_CONFIG["warning_hour"],
                 "closure_start": TYPHOON_CONFIG["closure_start_hour"],
-                "closure_end": TYPHOON_CONFIG["closure_end_hour"],
+                "closure_end": self.closure_end_hour,
             },
         }
 

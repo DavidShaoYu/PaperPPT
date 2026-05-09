@@ -124,9 +124,10 @@ def _draw_stockpiles(fig, ratio):
         ))
 
 
-def create_port_animation(metrics_llm, is_closure=False):
+def create_port_animation(metrics_llm, closure_start=48, closure_end=120):
     """创建港口动态运作动画
     展示列车→翻车→堆场→装船全流程动态
+    动画数据来源于仿真metrics的实际inflow/outflow/storage
     """
     num_frames = 42  # 168h / 4h = 42 frames
     np.random.seed(42)
@@ -217,31 +218,26 @@ def create_port_animation(metrics_llm, is_closure=False):
     ))
     kpi_trace_idx = base_trace_count + 5
 
-    # 生成动画帧
+    # 生成动画帧 - 基于实际仿真数据
     frames = []
     for frame_idx in range(num_frames):
         hour = frame_idx * 4
         storage = metrics_llm.hourly_port_storage[min(hour, len(metrics_llm.hourly_port_storage)-1)]
         storage_ratio = storage / 464.0
 
-        # 判断是否封航
-        is_closed = LAYOUT  # placeholder
-        from config import TYPHOON_CONFIG
-        is_closed = (TYPHOON_CONFIG["closure_start_hour"] <= hour < TYPHOON_CONFIG["closure_end_hour"])
+        # 封航判断：基于传入的实际封航参数
+        is_closed = (closure_start <= hour < closure_end)
 
-        # 到达场列车数（封航时减少）
-        if is_closed:
-            num_arriving = np.random.randint(2, 5)
-        else:
-            num_arriving = np.random.randint(6, 12)
+        # 到达场列车数：基于实际入港流量
+        hourly_inflow = metrics_llm.hourly_inflow[min(hour, len(metrics_llm.hourly_inflow)-1)]
+        # 入港流量映射到列车数（22万吨/天≈45列/天≈1.9列/小时→~8列在场）
+        base_trains = max(1, int(hourly_inflow * 24 / 22 * 8 + np.random.normal(0, 1)))
+        num_arriving = min(12, max(1, base_trains))
         train_x = [0.05 + np.random.uniform(0, 0.08) for _ in range(num_arriving)]
         train_y = [0.15 + i * 0.065 for i in range(num_arriving)]
 
-        # 翻车作业（活跃翻车机数）
-        if is_closed:
-            active_dumpers = np.random.randint(3, 6)
-        else:
-            active_dumpers = np.random.randint(8, 13)
+        # 翻车作业：活跃数与入港流量正相关
+        active_dumpers = min(13, max(2, int(num_arriving * 1.1 + np.random.randint(-1, 2))))
         active_idx = np.random.choice(13, active_dumpers, replace=False)
         unload_x = [0.24] * active_dumpers
         unload_y = [DUMPER_POSITIONS[i]["y"] for i in active_idx]
@@ -251,16 +247,18 @@ def create_port_animation(metrics_llm, is_closure=False):
         coal_x = [np.random.uniform(0.32, 0.42) for _ in range(num_particles)]
         coal_y = [np.random.uniform(0.35, 0.65) for _ in range(num_particles)]
 
-        # 在泊船舶
+        # 在泊船舶：基于实际出港流量
+        hourly_outflow = metrics_llm.hourly_outflow[min(hour, len(metrics_llm.hourly_outflow)-1)]
         if is_closed:
             num_ships = 0
         else:
-            num_ships = np.random.randint(3, 8)
+            # 出港流量映射到在泊船数（18万吨/天正常≈5-6艘在泊）
+            num_ships = min(12, max(0, int(hourly_outflow * 24 / 18 * 5 + np.random.normal(0, 1))))
         ship_berths = np.random.choice(17, min(num_ships, 17), replace=False) if num_ships > 0 else []
         ship_x = [0.92] * len(ship_berths)
         ship_y = [BERTH_POSITIONS[i]["y"] for i in ship_berths]
 
-        # 堆场库存水位线
+        # 堆场库存水位线：直接来自仿真数据
         stock_x = [0.44, 0.46, 0.50, 0.54, 0.58, 0.62, 0.65]
         stock_y = [0.3 + storage_ratio * 0.35 * (0.8 + 0.2 * np.sin(x * 20))
                    for x in stock_x]

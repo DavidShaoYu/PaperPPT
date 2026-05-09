@@ -86,10 +86,7 @@ def run_simulation(strategy_name: str, enable_typhoon: bool = True, seed: int = 
                    closure_days: int = 3, initial_storage: int = 210,
                    dispatch_interval: int = 4):
     """运行单次仿真"""
-    original_end = TYPHOON_CONFIG["closure_end_hour"]
-    original_storage = PORT_CONFIG["initial_storage"]
-    TYPHOON_CONFIG["closure_end_hour"] = TYPHOON_CONFIG["closure_start_hour"] + closure_days * 24
-    PORT_CONFIG["initial_storage"] = initial_storage
+    closure_end_hour = TYPHOON_CONFIG["closure_start_hour"] + closure_days * 24
 
     if strategy_name == "manual":
         strategy = manual_dispatch_strategy
@@ -100,12 +97,11 @@ def run_simulation(strategy_name: str, enable_typhoon: bool = True, seed: int = 
 
     sim = CoalSupplyChainSimulation(
         dispatch_strategy=strategy, enable_typhoon=enable_typhoon, seed=seed,
-        dispatch_interval=dispatch_interval
+        dispatch_interval=dispatch_interval,
+        initial_storage=initial_storage,
+        closure_end_hour=closure_end_hour,
     )
     metrics = sim.run()
-
-    TYPHOON_CONFIG["closure_end_hour"] = original_end
-    PORT_CONFIG["initial_storage"] = original_storage
     return metrics
 
 
@@ -163,7 +159,7 @@ def render_sidebar():
 
         closure_days = st.selectbox("封航时长", [1, 2, 3, 4, 5], index=2, format_func=lambda x: f"{x}天")
         initial_stock = st.slider("初始库存(万吨)", 150, 280, 210, step=10)
-        dispatch_interval = st.selectbox("调度频率", [1, 2, 4], index=0,
+        dispatch_interval = st.selectbox("调度频率", [1, 2, 4], index=2,
                                          format_func=lambda x: f"每{x}小时")
         dispatch_mode = st.radio("调度模式", ["智能调度(LLM)", "规则调度", "传统调度"],
                                  help="选择当前使用的调度策略")
@@ -355,7 +351,10 @@ def page_network(params):
                              dispatch_interval=params["dispatch_interval"])
     metrics_llm = results["智能调度"]
 
-    fig = create_simple_network_animation(metrics_llm)
+    closure_end_h = TYPHOON_CONFIG["closure_start_hour"] + params["closure_days"] * 24
+    fig = create_simple_network_animation(metrics_llm,
+                                          closure_start=TYPHOON_CONFIG["closure_start_hour"],
+                                          closure_end=closure_end_h)
     st.plotly_chart(fig, use_container_width=True)
 
     col1, col2, col3, col4 = st.columns(4)
@@ -381,7 +380,10 @@ def page_port(params):
     tab_anim, tab_sankey = st.tabs(["作业流程动画", "物流流量分析"])
 
     with tab_anim:
-        fig = create_port_animation(metrics_llm)
+        closure_end_h = TYPHOON_CONFIG["closure_start_hour"] + params["closure_days"] * 24
+        fig = create_port_animation(metrics_llm,
+                                    closure_start=TYPHOON_CONFIG["closure_start_hour"],
+                                    closure_end=closure_end_h)
         st.plotly_chart(fig, use_container_width=True)
 
     with tab_sankey:
