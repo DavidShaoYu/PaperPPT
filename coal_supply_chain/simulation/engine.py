@@ -26,10 +26,12 @@ class CoalSupplyChainSimulation:
     """一体化煤炭供应链仿真引擎 - 时间步进模型"""
 
     def __init__(self, dispatch_strategy: Optional[Callable] = None,
-                 enable_typhoon: bool = True, seed: int = 42):
+                 enable_typhoon: bool = True, seed: int = 42,
+                 dispatch_interval: int = None):
         random.seed(seed)
         self.dispatch_strategy = dispatch_strategy
         self.enable_typhoon = enable_typhoon
+        self.dispatch_interval = dispatch_interval or DISPATCH_INTERVAL_HOURS
         self.metrics = SimulationMetrics()
 
         self.port_storage = float(PORT_CONFIG["initial_storage"])
@@ -100,7 +102,7 @@ class CoalSupplyChainSimulation:
         if self.enable_typhoon:
             self._check_typhoon(hour)
 
-        if hour % DISPATCH_INTERVAL_HOURS == 0 and hour > 0:
+        if hour % self.dispatch_interval == 0 and hour > 0:
             self._dispatch_decision(hour)
 
         self._update_port(hour)

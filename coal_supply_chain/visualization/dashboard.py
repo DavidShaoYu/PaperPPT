@@ -83,7 +83,8 @@ st.markdown("""
 
 @st.cache_data
 def run_simulation(strategy_name: str, enable_typhoon: bool = True, seed: int = 42,
-                   closure_days: int = 3, initial_storage: int = 210):
+                   closure_days: int = 3, initial_storage: int = 210,
+                   dispatch_interval: int = 4):
     """运行单次仿真"""
     original_end = TYPHOON_CONFIG["closure_end_hour"]
     original_storage = PORT_CONFIG["initial_storage"]
@@ -98,7 +99,8 @@ def run_simulation(strategy_name: str, enable_typhoon: bool = True, seed: int = 
         strategy = create_llm_strategy(use_real_llm=False)
 
     sim = CoalSupplyChainSimulation(
-        dispatch_strategy=strategy, enable_typhoon=enable_typhoon, seed=seed
+        dispatch_strategy=strategy, enable_typhoon=enable_typhoon, seed=seed,
+        dispatch_interval=dispatch_interval
     )
     metrics = sim.run()
 
@@ -108,11 +110,13 @@ def run_simulation(strategy_name: str, enable_typhoon: bool = True, seed: int = 
 
 
 @st.cache_data
-def run_comparison():
+def run_comparison(closure_days=3, initial_storage=210, dispatch_interval=4):
     """运行三策略对比"""
     results = {}
     for name, key in [("传统调度", "manual"), ("规则优化", "rule"), ("智能调度", "llm")]:
-        results[name] = run_simulation(key)
+        results[name] = run_simulation(key, closure_days=closure_days,
+                                       initial_storage=initial_storage,
+                                       dispatch_interval=dispatch_interval)
     return results
 
 
@@ -159,6 +163,8 @@ def render_sidebar():
 
         closure_days = st.selectbox("封航时长", [1, 2, 3, 4, 5], index=2, format_func=lambda x: f"{x}天")
         initial_stock = st.slider("初始库存(万吨)", 150, 280, 210, step=10)
+        dispatch_interval = st.selectbox("调度频率", [1, 2, 4], index=0,
+                                         format_func=lambda x: f"每{x}小时")
         dispatch_mode = st.radio("调度模式", ["智能调度(LLM)", "规则调度", "传统调度"],
                                  help="选择当前使用的调度策略")
 
@@ -166,11 +172,12 @@ def render_sidebar():
         st.markdown("**接入配置**")
         st.caption("LLM端点: minimax-2.7")
         st.caption("仿真引擎: SimPy 4.x")
-        st.caption("调度间隔: 4小时")
+        st.caption(f"决策点: {168 // dispatch_interval}次/周期")
 
         return {
             "closure_days": closure_days,
             "initial_stock": initial_stock,
+            "dispatch_interval": dispatch_interval,
             "dispatch_mode": dispatch_mode,
         }
 
@@ -181,7 +188,9 @@ def page_monitor(params):
     """实时监控面板"""
     st.markdown('<div class="system-title">系统监控中心</div>', unsafe_allow_html=True)
 
-    results = run_comparison()
+    results = run_comparison(closure_days=params["closure_days"],
+                             initial_storage=params["initial_stock"],
+                             dispatch_interval=params["dispatch_interval"])
     metrics_llm = results["智能调度"]
     metrics_b0 = results["传统调度"]
 
@@ -209,11 +218,12 @@ def page_monitor(params):
     # 预警信息
     col_left, col_right = st.columns([2, 1])
     with col_right:
+        closure_end_display = TYPHOON_CONFIG["closure_start_hour"] + params["closure_days"] * 24
         st.markdown("**预警信息**")
         st.markdown(f'<div class="alert-box">台风预警已接收 (第{TYPHOON_CONFIG["warning_hour"]}小时)</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="alert-box">封航时段: 第{TYPHOON_CONFIG["closure_start_hour"]}~{TYPHOON_CONFIG["closure_end_hour"]}小时</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-box">智能调度已启动主动防御模式</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-box">当前阶段: 仿真完成(168h)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="alert-box">封航时段: 第{TYPHOON_CONFIG["closure_start_hour"]}~{closure_end_display}小时 ({params["closure_days"]}天)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-box">调度频率: 每{params["dispatch_interval"]}小时决策 ({168//params["dispatch_interval"]}次/周期)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-box">初始库存: {params["initial_stock"]}万吨</div>', unsafe_allow_html=True)
 
         # 电厂状态简表
         st.markdown("**电厂供应状态**")
@@ -236,11 +246,12 @@ def page_monitor(params):
         fig.add_trace(go.Scatter(x=days, y=metrics_b0.hourly_port_storage,
                                  name="传统调度", line=dict(color="#c53030", width=1.5, dash="dash")))
 
+        closure_end_h = TYPHOON_CONFIG["closure_start_hour"] + params["closure_days"] * 24
         fig.add_hline(y=280, line_dash="dot", line_color="#e53e3e", opacity=0.6,
                       annotation_text="安全上限280")
         fig.add_hline(y=140, line_dash="dot", line_color="#dd6b20", opacity=0.4,
                       annotation_text="安全下限140")
-        fig.add_vrect(x0=48/24, x1=120/24, fillcolor="rgba(229,62,62,0.06)", line_width=0,
+        fig.add_vrect(x0=48/24, x1=closure_end_h/24, fillcolor="rgba(229,62,62,0.06)", line_width=0,
                       annotation_text="封航期", annotation_position="top left")
 
         fig.update_layout(height=320, margin=dict(l=40, r=20, t=10, b=30),
@@ -254,15 +265,20 @@ def page_dispatch(params):
     """调度控制台"""
     st.markdown('<div class="system-title">智能调度控制台</div>', unsafe_allow_html=True)
 
-    results = run_comparison()
+    results = run_comparison(closure_days=params["closure_days"],
+                             initial_storage=params["initial_stock"],
+                             dispatch_interval=params["dispatch_interval"])
     metrics_llm = results["智能调度"]
 
     col_left, col_right = st.columns([3, 2])
 
     with col_left:
-        st.markdown("**调度决策时间线**")
+        closure_start = TYPHOON_CONFIG["closure_start_hour"]
+        closure_end = TYPHOON_CONFIG["closure_start_hour"] + params["closure_days"] * 24
 
-        # 模拟LLM决策日志
+        st.markdown(f"**调度决策日志** — 共{len(metrics_llm.dispatch_decisions)}条指令 "
+                    f"(每{params['dispatch_interval']}h决策一次)")
+
         decisions = metrics_llm.dispatch_decisions
         stage_colors = {
             "pre_closure_defense": "#3182ce",
@@ -271,29 +287,30 @@ def page_dispatch(params):
         }
 
         log_entries = []
+        seen_hours = set()
         for d in decisions:
             hour = d["hour"]
             cmd = d["command"]
-            if hour < TYPHOON_CONFIG["closure_start_hour"]:
-                stage = "封航前防御"
+            if hour < closure_start:
+                stage = "预警防御"
                 stage_key = "pre_closure_defense"
-            elif hour < TYPHOON_CONFIG["closure_end_hour"]:
-                stage = "封航中保供"
+            elif hour < closure_end:
+                stage = "封航保供"
                 stage_key = "supply_assurance"
             else:
-                stage = "恢复期加速"
+                stage = "恢复加速"
                 stage_key = "recovery"
 
-            log_entries.append(f'<span style="color:{stage_colors[stage_key]}">【{stage}】</span>'
-                             f' T+{hour}h | {cmd.get("type","")} | {cmd.get("reason","")}')
+            # 每个决策点只显示一条摘要（避免重复展示同一时刻多条指令）
+            if hour not in seen_hours:
+                seen_hours.add(hour)
+                log_entries.append(
+                    f'<span style="color:{stage_colors[stage_key]}; font-weight:600">'
+                    f'[{stage}]</span> '
+                    f'T+{hour:>3d}h │ <b>{cmd.get("type","")}</b> │ {cmd.get("reason","")}'
+                )
 
-        # 只显示关键决策
-        key_hours = [8, 12, 24, 48, 52, 72, 96, 120, 124, 144, 168]
-        filtered = [e for e in log_entries if any(f"T+{h}h" in e for h in key_hours)]
-        if not filtered:
-            filtered = log_entries[:20]
-
-        st.markdown(f'<div class="decision-log">{"<br>".join(filtered[:25])}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="decision-log">{"<br>".join(log_entries)}</div>', unsafe_allow_html=True)
 
         # 阶段策略说明
         st.markdown("**三阶段决策逻辑**")
@@ -333,7 +350,9 @@ def page_network(params):
     """铁路网络仿真"""
     st.markdown('<div class="system-title">铁路运输网络仿真</div>', unsafe_allow_html=True)
 
-    results = run_comparison()
+    results = run_comparison(closure_days=params["closure_days"],
+                             initial_storage=params["initial_stock"],
+                             dispatch_interval=params["dispatch_interval"])
     metrics_llm = results["智能调度"]
 
     fig = create_simple_network_animation(metrics_llm)
@@ -354,7 +373,9 @@ def page_port(params):
     """港口作业仿真"""
     st.markdown('<div class="system-title">港口作业仿真系统</div>', unsafe_allow_html=True)
 
-    results = run_comparison()
+    results = run_comparison(closure_days=params["closure_days"],
+                             initial_storage=params["initial_stock"],
+                             dispatch_interval=params["dispatch_interval"])
     metrics_llm = results["智能调度"]
 
     tab_anim, tab_sankey = st.tabs(["作业流程动画", "物流流量分析"])
@@ -386,7 +407,9 @@ def page_plant(params):
     """电厂供应监控"""
     st.markdown('<div class="system-title">电厂供应保障监控</div>', unsafe_allow_html=True)
 
-    results = run_comparison()
+    results = run_comparison(closure_days=params["closure_days"],
+                             initial_storage=params["initial_stock"],
+                             dispatch_interval=params["dispatch_interval"])
     metrics_llm = results["智能调度"]
     metrics_b0 = results["传统调度"]
 
@@ -443,7 +466,9 @@ def page_experiment(params):
 
 def _render_comparison_experiment(params):
     """策略对比实验"""
-    results = run_comparison()
+    results = run_comparison(closure_days=params["closure_days"],
+                             initial_storage=params["initial_stock"],
+                             dispatch_interval=params["dispatch_interval"])
 
     # 核心曲线对比
     fig = go.Figure()
