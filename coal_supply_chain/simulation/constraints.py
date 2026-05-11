@@ -67,10 +67,13 @@ def _check_divert_constraints(cmd: dict, state: dict) -> Tuple[bool, str]:
     count = cmd.get("count", 0)
     running = state["trains"]["running"]
 
+    if count <= 0:
+        return False, "分流数量必须为正"
+
     if count > running:
         return False, f"请求分流{count}列，但仅有{running}列在途列车"
 
-    if count > running * 0.5:
+    if running > 0 and count > running * 0.5:
         return False, f"单次分流比例不得超过在途列车的50%"
 
     return True, "OK"

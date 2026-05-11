@@ -294,18 +294,29 @@ def create_port_animation(metrics_llm, closure_start=48, closure_end=120):
 
     fig.frames = frames
 
-    # 播放控制
+    # 播放控制（多倍速）
     fig.update_layout(
         updatemenus=[dict(
             type="buttons", showactive=False,
             x=0.5, y=-0.02, xanchor="center",
+            direction="left",
             buttons=[
-                dict(label="  ▶ 播放  ",
+                dict(label=" 0.5x ",
                      method="animate",
-                     args=[None, {"frame": {"duration": 400, "redraw": True},
+                     args=[None, {"frame": {"duration": 2400, "redraw": True},
                                   "fromcurrent": True,
-                                  "transition": {"duration": 150}}]),
-                dict(label="  ⏸ 暂停  ",
+                                  "transition": {"duration": 1000}}]),
+                dict(label=" ▶ 1x ",
+                     method="animate",
+                     args=[None, {"frame": {"duration": 1200, "redraw": True},
+                                  "fromcurrent": True,
+                                  "transition": {"duration": 500}}]),
+                dict(label=" 2x ",
+                     method="animate",
+                     args=[None, {"frame": {"duration": 600, "redraw": True},
+                                  "fromcurrent": True,
+                                  "transition": {"duration": 250}}]),
+                dict(label=" ⏸ ",
                      method="animate",
                      args=[[None], {"frame": {"duration": 0, "redraw": False},
                                     "mode": "immediate"}]),
@@ -314,15 +325,16 @@ def create_port_animation(metrics_llm, closure_start=48, closure_end=120):
         sliders=[dict(
             active=0,
             steps=[dict(
-                args=[[f"h{i*4}"], {"frame": {"duration": 400, "redraw": True},
-                                     "mode": "immediate"}],
+                args=[[f"h{i*4}"], {"frame": {"duration": 1200, "redraw": True},
+                                     "mode": "immediate",
+                                     "transition": {"duration": 500}}],
                 label=f"{i*4}h" if i % 4 == 0 else "",
                 method="animate")
                 for i in range(num_frames)],
             x=0.08, len=0.84, xanchor="left", y=-0.06,
             currentvalue=dict(prefix="仿真时间: ", visible=True,
                               xanchor="center", font=dict(size=12)),
-            transition=dict(duration=150),
+            transition=dict(duration=500),
         )],
     )
 

@@ -79,11 +79,24 @@ class DispatcherAgent:
             return "当前为正常运营阶段，请执行常规调度。"
 
     def _llm_decision(self, prompt: str, state: dict) -> list:
-        """通过真实LLM生成决策"""
+        """通过真实LLM生成决策（单轮工具调用）
+        预测数据已嵌入prompt，LLM直接调用行动工具
+        """
         stage = self._determine_stage(state, state["current_hour"])
+
+        # 将库存预测直接嵌入prompt，无需LLM再调predict_stock_trend
+        prediction = execute_tool("predict_stock_trend",
+                                  {"hours_ahead": 24, "target": "all"}, state)
+        prediction_context = (
+            f"\n\n【库存预测（未来24h）】\n"
+            f"港口趋势: {prediction.get('port_trend', [])}\n"
+            f"电厂告警: {prediction.get('plant_alerts', [])}\n"
+            f"是否将超安全线: {prediction.get('will_exceed_safety', False)}"
+        )
+
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": prompt + prediction_context},
         ]
 
         try:
@@ -100,7 +113,7 @@ class DispatcherAgent:
                 if "commands" in result:
                     commands.extend(result["commands"])
         else:
-            print(f"    [LLM未调用工具，使用备用策略] 回复: {(response.get('content') or '')[:80]}")
+            print(f"    [LLM未调用工具，使用备用策略]")
             return self._mock_decision(stage, state)
 
         if not commands:

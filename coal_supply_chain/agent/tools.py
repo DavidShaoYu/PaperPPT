@@ -21,7 +21,7 @@ DISPATCH_TOOLS = [
                     "priority_plants": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "优先保障的电厂ID列表"
+                        "description": "优先保障的电厂ID列表（最多5个，超出将被截断）"
                     }
                 },
                 "required": ["mode"]
@@ -125,22 +125,30 @@ def _execute_split_route(args: dict, state: dict) -> dict:
 
     if mode == "pre_closure_defense":
         commands = []
-        # 核心策略：封航前适度降低入港 + 提前保障电厂
-        # 论文目标：2天内从210降至205（净-2.5万吨/天）
-        # 仅轻微减流（不影响正常运营太多），重点在预保障电厂
+        safety_high = state["port"].get("safety_high", 280)
+        headroom = safety_high - port_storage
+        if headroom < 10:
+            reduce_ratio = 0.25
+        elif headroom < 30:
+            reduce_ratio = 0.15
+        elif headroom < 50:
+            reduce_ratio = 0.08
+        else:
+            reduce_ratio = 0.03
         commands.append({
             "type": "reduce_inflow",
-            "ratio": 0.03,
-            "reason": "封航前主动减流：暂停部分新增发车计划"
+            "ratio": reduce_ratio,
+            "reason": f"封航前主动减流(余量{headroom:.0f}万吨)：暂停部分新增发车计划"
         })
-        # 预判封航后低库存电厂，提前分流直供（核心价值）
         urgent = [pp for pp in state["power_plants"] if pp["stock_days"] < 10]
         if urgent:
-            commands.append({
-                "type": "divert_trains",
-                "count": min(8, idle_trains),
-                "reason": "预判封航后低库存电厂，提前铁路直供"
-            })
+            divert_count = min(8, idle_trains, state["trains"]["running"])
+            if divert_count > 0:
+                commands.append({
+                    "type": "divert_trains",
+                    "count": min(divert_count, state["trains"]["running"] // 2),
+                    "reason": "预判封航后低库存电厂，提前铁路直供"
+                })
             commands.append({
                 "type": "prioritize_plant",
                 "plant_ids": [pp["id"] for pp in urgent[:5]],
@@ -150,46 +158,54 @@ def _execute_split_route(args: dict, state: dict) -> dict:
 
     elif mode == "supply_assurance":
         commands = []
-        # 核心策略：封航中维持低入港量 + 铁路直供电厂保障
-        # 不加速装车（mod保持1.0），入港量维持基准22万吨/天
-        # 论文目标：封航期日积累约22万吨（仅在途列车到达）
-        # 积极分流直供紧急电厂
-        urgent = [pp for pp in state["power_plants"] if pp["stock_days"] < 6]
-        if urgent:
+        safety_high = state["port"].get("safety_high", 280)
+        if port_storage > safety_high - 15:
             commands.append({
-                "type": "divert_trains",
-                "count": min(10, state["trains"]["running"]),
-                "reason": "封航中将在途列车分流直供紧急电厂"
+                "type": "reduce_inflow",
+                "ratio": 0.20,
+                "reason": f"封航中港口库存{port_storage:.0f}接近上限，大幅减流"
             })
+        urgent = [pp for pp in state["power_plants"] if pp["stock_days"] < 6]
+        running = state["trains"]["running"]
+        if urgent:
+            divert_count = min(10, running // 2)
+            if divert_count > 0:
+                commands.append({
+                    "type": "divert_trains",
+                    "count": divert_count,
+                    "reason": "封航中将在途列车分流直供紧急电厂"
+                })
             commands.append({
                 "type": "prioritize_plant",
                 "plant_ids": [pp["id"] for pp in urgent[:5]],
                 "reason": "封航中优先保障紧急电厂"
             })
         else:
-            commands.append({
-                "type": "divert_trains",
-                "count": min(5, state["trains"]["running"]),
-                "reason": "封航中分流部分列车直供电厂"
-            })
+            divert_count = min(5, running // 2)
+            if divert_count > 0:
+                commands.append({
+                    "type": "divert_trains",
+                    "count": divert_count,
+                    "reason": "封航中分流部分列车直供电厂"
+                })
         return {"commands": commands, "status": "success"}
 
     elif mode == "recovery":
         commands = []
-        # 核心策略：恢复期加速出港清库 + 持续保障电厂
-        # 释放泊位，配合积压船舶快速清理港口库存
-        commands.append({
-            "type": "release_berths",
-            "reason": "恢复期释放泊位加速出港"
-        })
-        # 继续保障低库存电厂
+        if not state["port"]["is_closed"]:
+            commands.append({
+                "type": "release_berths",
+                "reason": "恢复期释放泊位加速出港"
+            })
         urgent = [pp for pp in state["power_plants"] if pp["stock_days"] < 7]
         if urgent:
-            commands.append({
-                "type": "divert_trains",
-                "count": min(5, idle_trains),
-                "reason": "恢复期分流列车补给电厂"
-            })
+            divert_count = min(5, idle_trains, state["trains"]["running"] // 2)
+            if divert_count > 0:
+                commands.append({
+                    "type": "divert_trains",
+                    "count": divert_count,
+                    "reason": "恢复期分流列车补给电厂"
+                })
             commands.append({
                 "type": "prioritize_plant",
                 "plant_ids": [pp["id"] for pp in urgent[:5]],
@@ -201,9 +217,16 @@ def _execute_split_route(args: dict, state: dict) -> dict:
 
 
 def _execute_berth_schedule(args: dict, state: dict) -> dict:
-    """执行泊位调度优化"""
+    """执行泊位调度优化 - 返回泊位释放指令"""
     priority_dest = args.get("priority_destinations", [])
+    commands = []
+    if not state["port"]["is_closed"]:
+        commands.append({
+            "type": "release_berths",
+            "reason": f"泊位优化：优先装载发往{priority_dest[:3]}的船舶"
+        })
     return {
+        "commands": commands,
         "schedule": [
             {"berth": f"BT{i:02d}", "priority": "high" if i <= 5 else "normal"}
             for i in range(1, 18)
@@ -249,15 +272,31 @@ def _execute_stock_prediction(args: dict, state: dict) -> dict:
 
 
 def _execute_dispatch_plan(args: dict, state: dict) -> dict:
-    """执行调度计划生成"""
+    """执行调度计划生成
+    如果actions中的type是工具名，则委派给对应工具执行
+    """
     stage = args.get("stage", "pre_closure")
     actions = args.get("actions", [])
+
+    tool_names = {"optimize_split_route", "optimize_berth_schedule",
+                  "predict_stock_trend", "generate_dispatch_plan"}
+
+    from simulation.constraints import VALID_COMMAND_TYPES
 
     commands = []
     for action in actions:
         cmd_type = action.get("type", "normal_dispatch")
         params = action.get("params", {})
-        commands.append({"type": cmd_type, **params})
+
+        if cmd_type in tool_names:
+            result = execute_tool(cmd_type, params, state)
+            if "commands" in result:
+                commands.extend(result["commands"])
+        elif cmd_type in VALID_COMMAND_TYPES:
+            cmd = {"type": cmd_type, **params}
+            if cmd_type == "prioritize_plant" and "plant_ids" in cmd:
+                cmd["plant_ids"] = cmd["plant_ids"][:5]
+            commands.append(cmd)
 
     if not commands:
         result = _execute_split_route({"mode": stage}, state)
